@@ -1,3 +1,3 @@
 # hris
 
-All the code applications is in modulels directory.
+All the PHP code applications is in modules directory.
