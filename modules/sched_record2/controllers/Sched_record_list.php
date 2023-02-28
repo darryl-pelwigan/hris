@@ -1,0 +1,510 @@
+<?php defined('BASEPATH') OR exit('No direct script access allowed');
+
+class Sched_record_list extends MY_Controller {
+
+	function __construct(){
+		parent::__construct();
+		$this->load->module('admin/admin');
+		$this->load->module('sched_record');
+		$this->load->model('sched_cs_record_model');
+		$this->load->model('sched_record_model');
+		$this->load->model('student/student_model');
+		$this->load->helper('transmutation');
+		$this->load->model('subject/subject_enrollees_model');
+		$this->admin->_check_login();
+	}
+
+	public function table( $settings ,  $labunits ,  $type , $sched_id , $check_sched , $teacher_id , $pdf=FALSE ){
+		$type_d=$this->sched_record_model->type($type,$check_sched[0]['acadyear']);
+		$subject_info =$this->sched_record_model->get_sched_info($teacher_id,$sched_id);
+		$data2['cs']=$this->sched_record_model->get_subject_cs( $check_sched['labunits'] , $teacher_id , $sched_id ,$type);
+		$data2['cs_items_total']=$this->sched_record_model->get_subject_cs_items_total( $check_sched['labunits'] , $teacher_id , $sched_id ,$type,'SUM(items) as items_sum');
+		$data3['exam']=$this->sched_record_model->get_subject_exam($check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $sched_id ,$type);
+
+		$check_fused = $this->subject_enrollees_model->check_fused($sched_id);
+			if($check_fused[0]->fuse==null){
+				$student_list=$this->sched_record_model->get_student_list($sched_id,'s.studentid');
+			}else{
+				$get_fused = $this->subject_enrollees_model->get_fused($check_fused[0]->fuse);
+				$schedids = explode(",",$get_fused[0]->sched);
+				$test = array();
+				for($x=0;$x<count($schedids);$x++){
+					$aaData[$x]=$this->sched_record_model->get_student_list($schedids[$x],'s.studentid');
+					$test = array_merge($test,$aaData[$x]);
+				}
+				$student_list=$test;
+			}
+
+		if($check_sched['count']>1){
+			$tester = ($check_sched[0]['lecunits']!=0 || $check_sched[0]['labunits']!=0) ? 1:0;
+			$tester1 = ($check_sched[1]['lecunits']!=0 || $check_sched[1]['labunits']!=0) ? 1:0;
+				if( $tester  && $check_sched[0]['teacherid']==str_pad($teacher_id,6,0,STR_PAD_LEFT) && substr($type,0,1)!='l' ){
+						$tbody = $this->table_tbody( $check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $type , $sched_id ,$type_d , $student_list , $data2 , $data3  , $pdf );
+				}elseif($tester1  && $check_sched[1]['teacherid']==str_pad($teacher_id,6,0,STR_PAD_LEFT) && substr($type,0,1)=='l' ){
+						$tbody = $this->table_tbody( $check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $type , $sched_id ,$type_d , $student_list , $data2 , $data3  , $pdf );
+				}else{
+						$tbody = $this->other_table_tbody( $check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $type , $sched_id ,$type_d , $student_list , $data2 , $data3 , $pdf );
+				}
+		}else{
+			$test=4;
+				$tbody = $this->table_tbody( $check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $type , $sched_id ,$type_d , $student_list , $data2 , $data3  , $pdf);
+		}
+
+		$th_data = $this->table_th($check_sched['lecunits'] , $check_sched['labunits'] , $teacher_id , $type , $sched_id ,$type_d , $data2 , $data3 , $pdf);
+		$cs_prnct_e = '';
+		if($th_data['total_cs_prcnt']<100){
+			$cs_prnct_e = '<p class="bg-danger">Please Complete 100% total CS, Created='.$th_data['total_cs_prcnt'].'%</p>';
+		}
+
+		if($th_data['total_cs_prcnt']>100){
+			$cs_prnct_e = '<p class="bg-danger">Please Make CS 100% , Created='.$th_data['total_cs_prcnt'].'%</p>';
+		}
+
+		// table table-hover table-striped table-bordered myGradesTable dataTable no-footer
+
+		$data['table']=" <div class='panel panel-default panel-overflow'>
+      						<div class='panel-heading'>".strtoupper('Student list  '.$type_d[7].'  '.$type_d[0])."
+							   <span class='pull-right glyphicon glyphicon-cog cursor-pointer' data-toggle='collapse' data-target='#settings'></span>
+							  </div>
+							<div class='panel-body'>
+							".$settings."
+							".$cs_prnct_e."
+							<input type='hidden' name='type' id='type' value='".$type."' />
+									<table data-page-length='10' class=' table table-bordered  display  dataTable dtr-inline' id='dataTables-example-p'>
+										<thead>".$th_data['th']."</thead>
+										<tbody>".$tbody."</tbody>
+									</table>
+							</div>
+						</div>
+					<input type='hidden' id='_this_type' value='".$type."' />
+						";
+
+		return $data;
+	}
+
+	public function table_th($lecunits, $labunits , $teacher_id ,$type , $sched_id ,$type_d , $cs , $exam  , $pdf){
+			if($lecunits>0 && $labunits>0){ $type_d[8]=  $type_d[8];}
+         	else{$type_d[8]= $type_d[5];}
+
+			$data['th']='';
+			$rowspan='';
+			$rowspan2='';
+			$colspan='colspan="2"';
+			$total_cs_prcnt = 0;
+			$cs_items_count=0;
+			if($cs['cs']['cs_num']>0  ){
+				if($cs['cs']['cs_num']>0){
+					for ($c=0;$c<count($cs['cs']["cs_query"]) ; $c++) {
+						$cs_items=$this->sched_cs_record_model->view_cs_items($teacher_id,$sched_id,$cs["cs"]["cs_query"][$c]->id,$type,'id');
+							$cs_items_count=$cs_items_count+$cs_items['cs_i_num'];
+					}
+				}
+				$rowspan="rowspan='3'";
+				$rowspan2="rowspan='2'";
+				$colspan="colspan='".(($cs['cs']['cs_num']*3)+$cs_items_count)."'";
+			}
+
+			$data['th'] = "<tr >
+								<th ".$rowspan." >No</th>
+								<th   ".$rowspan."  >ID</th>
+								<th  ".$rowspan." class='name_tgrades' >Name</th>
+								<th   ".$colspan." ><input type='hidden' name='cs_count-$type' id='cs_count-$type' value='".$cs['cs']['cs_num']."' />Class Standing  </th>
+								<th >Total</th>
+								<th  ".$rowspan."><input type='hidden' name='cs_prcnt' id='cs_prcnt' value='".$type_d[1]."' /> ".$type_d[3]."</th>
+								<th > Exam</th>
+								<th ".$rowspan.">Equiv</th>
+								<th ".$rowspan."><input type='hidden' name='exam_prcnt' id='exam_prcnt' value='".$type_d[2]."' /> ".$type_d[4]."</th>
+								<th ".$rowspan."> $type_d[0] Grade</th>
+							</tr>";
+      		$exam_max=0;
+      if($cs['cs']['cs_num']>0 || ($exam['exam']['exam_num']>0 && $exam['exam']['exam_query'][0]->{$type_d[8]}!=0)){
+	        $data['th'] .= "<tr >";
+			$cs_id_list='';
+					if($cs['cs']['cs_num']>0){
+						for ($c=0;$c<count($cs['cs']["cs_query"]) ; $c++) {
+							$cs_id_list .=$cs['cs']["cs_query"][$c]->id.',';
+							$cs_items=$this->sched_cs_record_model->view_cs_items($teacher_id,$sched_id,$cs["cs"]["cs_query"][$c]->id,$type,'id,items');
+							$cs_sum_items=0;
+							for($x=0;$x<$cs_items['cs_i_num'];$x++){
+								$cs_sum_items=$cs_sum_items+$cs_items['cs_i_query'][$x]->items;
+							}
+							$data['th'] .= ' <th  colspan="'.(3+$cs_items['cs_i_num']).'" >
+												<input type="hidden" name="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'" id="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'" value="'.$cs["cs"]["cs_query"][$c]->id.'" />
+												<input type="hidden" name="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'-total" id="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'-total" value="'.$cs["cs"]["cs_query"][$c]->items.'" />
+												<input type="hidden" name="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'-prcnt" id="cs_'.$sched_id.'-'.$type.'-'.$cs["cs"]["cs_query"][$c]->id.'-prcnt" value="'.$cs["cs"]["cs_query"][$c]->percent.'" />
+												'.$cs["cs"]["cs_query"][$c]->description.'<br />('.$cs["cs"]["cs_query"][$c]->percent.'%)
+											 </th>';
+								$total_cs_prcnt = $total_cs_prcnt +  $cs["cs"]["cs_query"][$c]->percent;
+						}
+							$data['th'] .= '<th '.$rowspan2.'  >
+										<input type="hidden" name="cs_id_list'.$sched_id.'-'.$type.'" id="cs_id_list'.$sched_id.'-'.$type.'" value=\''.($cs_id_list).'\' />
+										100%
+									</th>';
+					}else{
+						$data['th'] .='<th '.$rowspan2.' ></th><th  ></th>';
+					}
+					if($exam['exam']['exam_num']>0){
+						if($lecunits>0 && $labunits>0)
+							$type_d[8]=  $type_d[8];
+						else
+							$type_d[8]= $type_d[5];
+
+		       				 $data['th'] .= ' <th '.$rowspan2.'><input type="hidden" name="total_exam_'.$sched_id.'-$type" id="total_exam_'.$sched_id.'-'.$type.'" value="'.$exam['exam']['exam_query'][0]->{$type_d[8]}.'" />('.$exam['exam']['exam_query'][0]->{$type_d[8]}.')</th>';
+					}else{
+		        			 $data['th'] .=  '<th '.$rowspan2.'  ></th>';
+		      		}
+      			$data['th'] .= "</tr>";
+				      if($cs['cs']['cs_num']>0){
+				      	$total_cs_sum= 0 ;
+				      			      $data['th'] .= "<tr >";
+								for ($c=0;$c<count($cs['cs']["cs_query"]) ; $c++) {
+									$cs_items=$this->sched_cs_record_model->view_cs_items($teacher_id,$sched_id,$cs["cs"]["cs_query"][$c]->id,$type,'id,items,title,date_updated');
+									$cs_id_list .=$cs['cs']["cs_query"][$c]->id.',';
+									$cs_sum_items=0;
+									for($x=0;$x<$cs_items['cs_i_num'];$x++){
+										$cs_sum_items=$cs_sum_items+$cs_items['cs_i_query'][$x]->items;
+										$data['th'] .= '<th  > '.$cs_items['cs_i_query'][$x]->title.' ('.$cs_items['cs_i_query'][$x]->items.')
+														<input type="hidden" id="max_cs_'.$sched_id.'_'.$cs["cs"]["cs_query"][$c]->id.'_'.$cs_items['cs_i_query'][$x]->id.'-'.$type.'" value="'.$cs_items['cs_i_query'][$x]->items.'" />
+														<img src="'.base_url('assets/images/icons/CSV.png').'" onclick="$(this).importDataCs(\''.$teacher_id.'\',\''.$sched_id.'\',\''.$cs["cs"]["cs_query"][$c]->id.'\',\''.$cs_items['cs_i_query'][$x]->id.'\',\''.$type.'\',\''.$cs["cs"]["cs_query"][$c]->description.'\',\''.$cs_items['cs_i_query'][$x]->title.'\',\''.date("M d , Y h:i:s A",strtotime($cs_items['cs_i_query'][$x]->date_updated)).'\');" width="20" />
+														</th>';
+						      		}
+									  $cs_sum_itemsx=0;
+									  	if($cs_sum_items<=200 ){
+											$cs_sum_itemsx = $cs_sum_items;
+										}else{
+											if((($cs_sum_items)%20==0) && $cs_sum_items>200 && $cs_sum_items<=400){
+												$cs_sum_itemsx=$cs_sum_items/2;
+											}else{
+
+											}
+										}
+										if($cs_sum_items%2==0){
+											$cs_total_class = '';
+										}else{
+											$cs_total_class = 'bg-warning-tb';
+										}
+										$cs_sum_itemsx=($cs_sum_itemsx==$cs_sum_items)?$cs_sum_items:$cs_sum_items.'/2';
+
+						      		$data['th'] .= '<th class="'.$cs_total_class.'" >Total <br/>('.$cs_sum_itemsx.')</th>';
+						      		$data['th'] .= '<th  >Trans <br/>(99)</th>';
+						      		$data['th'] .= '<th  >'.$cs['cs']["cs_query"][$c]->percent.'%</th>';
+						   }
+						   $data['th'] .= "</tr>";
+						}
+    	}
+     		$data['total_cs_prcnt'] = $total_cs_prcnt;
+			return $data;
+	}
+
+	public function table_tbody($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $student_list , $cs , $exam  , $pdf ){
+		 $tr='';
+		 $count=1;
+			for($x=0;$x<count($student_list);$x++){
+				$student_lfm=($this->student_model->get_student_info($student_list[$x]->studentid,'lastname , firstname , middlename '));
+				$midl_nme = ($student_lfm[0]->middlename!='')?$student_lfm[0]->middlename[0].'.':'';
+				 $tr .="<tr id='row_".$student_list[$x]->studentid."'>
+							<td >$count</td>
+							<td class='student_lfm' >".$student_list[$x]->studentid."</td>
+							<td class='student_lfm' >".$student_lfm[0]->lastname.", ".ucwords(strtolower($student_lfm[0]->firstname))." ".$midl_nme."</td>
+							".$this->student_cs_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $student_list[$x]->studentid ,  $cs ,  $exam  , $pdf )."
+						</tr>";
+			$count++;
+			}
+		return $tr;
+	}
+
+	public function student_cs_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid ,  $cs ,  $exam  , $pdf ){
+		$td='';
+		$total_cs='';
+		if($cs['cs']['cs_num']>0){
+			for($x=0;$x<$cs['cs']['cs_num'];$x++){
+				$cs_id=$cs['cs']['cs_query'][$x]->id;
+				$cs_items=$this->sched_cs_record_model->view_cs_items($teacher_id,$sched_id,$cs_id,$type);
+				#$max=$cs['cs']['cs_query'][$x]->items;
+				$prcnt=$cs['cs']['cs_query'][$x]->percent;
+				$score_total = 0;
+				$scorexx ='';
+				$cs_items_total=0;
+				for($c=0;$c<$cs_items['cs_i_num'];$c++){
+					$max=$cs_items['cs_i_query'][$c]->items;
+					$cs_items_total=$cs_items_total+$max;
+					if(!$this->_check_score($this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id, $type , 'sc_score' ),'sc_score') && $pdf==FALSE){
+							$scorexx .='<td><input type="number" name="cs_score_'.$sched_id.'_'.$cs_id.'_'.$cs_items['cs_i_query'][$c]->id.'_'.$studentid.'-'.$type.$x.'" id="cs_score_'.$sched_id.'_'.$cs_id.'_'.$cs_items['cs_i_query'][$c]->id.'_'.$studentid.'-'.$type.$x.'" min="0" max="'.$max.'" class="form-control inp-sm text-center empty-cs " onblur=""  oninput="$(this).computeCs(\''.$studentid.'\',\''.$sched_id.'\',\''.$type.'\',\''.$cs_id.'\',\''.$cs_items['cs_i_query'][$c]->id.'\',\''.$x.'\');" /></td>';
+
+					}elseif($this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id , $type , 'sc_score' )){
+							$score =	$this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id , $type , 'sc_score' )[0]->sc_score;
+							$score_total = $score_total+$score;
+							$scorexx .='<td  ondblclick="$(this).ena_edit_cs(\''.$studentid.'\',\''.$sched_id.'\',\''.$type.'\',\''.$cs_id.'\',\''.$cs_items['cs_i_query'][$c]->id.'\',\''.$x.'\');" ><input type="hidden" name="cs_score_'.$sched_id.'_'.$cs_id.'_'.$cs_items['cs_i_query'][$c]->id.'_'.$studentid.'-'.$type.$x.'" id="cs_score_'.$sched_id.'_'.$cs_id.'_'.$cs_items['cs_i_query'][$c]->id.'_'.$studentid.'-'.$type.$x.'" min="0" max="'.$max.'" class="form-control inp-sm text-center empty-cs " onblur=""  oninput="$(this).computeCs(\''.$studentid.'\',\''.$sched_id.'\',\''.$type.'\',\''.$cs_id.'\',\''.$cs_items['cs_i_query'][$c]->id.'\',\''.$x.'\');" value="'.$score.'" />
+									<span>'.$score.'</span></td>';
+
+					}else{
+						$scorexx .='<td></td>';
+					}
+
+				}
+				if($cs_items_total<=200 ){
+					if($cs_items_total%2==0){
+						$cs_trn = transmutation($cs_items_total,$score_total);
+					}else{
+						$cs_trn =0;
+					}
+				}else{
+					if((($cs_items_total)%20==0) && $cs_items_total>200 && $cs_items_total<=400){
+						$cs_items_total=$cs_items_total/2;
+						$score_total = floor($score_total/2);
+						$cs_trn = transmutation($cs_items_total,$score_total);
+					}else{
+						$cs_trn =0;
+					}
+
+				}
+				$cs_prcnt = ($cs_trn) * ($prcnt/100);
+				$total_cs=$total_cs+$cs_prcnt;
+
+				$scorex =$scorexx.'<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-total">'.$score_total.'</td>
+								<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-trn">'.$cs_trn.'</td>
+								<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-prcnt">'.$cs_prcnt.'</td>';
+				$td .= "".($scorex)."";
+			}
+		}else{ $td .= '<td></td><td></td>'; }
+		$td .='<td id="cs_scoretotal_'.$studentid.'-'.$type.'" >'.$total_cs.'</td>';
+		$cs_prcntx=0;
+		if(($total_cs>0)){
+			$cs_prcntx=($total_cs) * ($type_d[1]);
+			$td .='<td id="cs_scoreprcnt_'.$studentid.'-'.$type.'">'.round($cs_prcntx,2) .'</td>';
+		}else{	$td .='<td id="cs_scoreprcnt_'.$studentid.'-'.$type.'"></td>'; $cs_prcntx=0; }
+		$td .=$this->student_exam_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid ,  $exam , $cs_prcntx  , $pdf );
+		return $td;
+	}
+
+	public function student_exam_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid , $exam , $cs_prcnt  , $pdf ){
+		if($lecunits>0 && $labunits>0)
+            $type_d[8]=  $type_d[8];
+         else
+            $type_d[8]= $type_d[5];
+		$final=$cs_prcnt;
+		$td='';
+		if($lecunits>0 && $labunits>0 ){
+					$table_e_f='pcc_gs_student_gradesleclab';
+		}else{
+					$table_e_f='pcc_gs_student_gradeslec';
+		}
+		if($exam['exam']['exam_num']>0 && $exam['exam']['exam_query'][0]->{$type_d[8]}!=0){
+			for($x=0;$x<$exam['exam']['exam_num'];$x++){
+
+				$exam_id=$exam['exam']['exam_query'][$x]->id;
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type ,  $type_d[8]),$type_d[8])<=0 && $exam['exam']['exam_query'][$x]->{$type_d[8]} > 0 && $pdf==FALSE){
+						$scorex='<td><input type="number" name="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" id="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" min="0" max="'.$exam['exam']['exam_query'][$x]->{$type_d[8]}.'" class="form-control inp-sm text-center empty-exam " onblur="" oninput="$(this).computeExam(\''.$studentid.'\',\''.$exam_id.'\',\''.$sched_id.'\',\''.$type.'\');" /></td>';
+				}else{
+					if($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8] )){
+							$score = $this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8] )[0]->{$type_d[8]};
+							$dbclck ='ondblclick="$(this).ena_edit_exam(\''.$studentid.'\',\''.$exam_id.'\',\''.$sched_id.'\',\''.$type.'\');"';
+					}else{	$score = '';
+							$dbclck ='';
+					}
+					$scorex='<td '.$dbclck.' ><input type="hidden" name="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" id="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" min="0" max="" class="form-control inp-sm text-center empty-exam " onblur="" oninput="$(this).computeExam(\''.$studentid.'\',\''.$exam_id.'\',\''.$sched_id.'\',\''.$type.'\');" value="'.($score).'" />
+					<span>'.$score.'</span></td>';
+				}
+				$td .= $scorex;
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8]),$type_d[8]) ){
+					 $td .='<td id="exam_scoreequiv_'.$studentid.'_'.$sched_id.'-'.$type.'">'.transmutation($exam['exam']['exam_query'][0]->{$type_d[8]},$score).'</td>';
+				}else{	$td .='<td id="exam_scoreequiv_'.$studentid.'_'.$sched_id.'-'.$type.'" ></td>'; }
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8]),$type_d[8]) ){
+					$exam_prcnt=transmutation($exam['exam']['exam_query'][0]->{$type_d[8]},$score) * ($type_d[2]);
+					 $td .='<td id="exam_scoreprcnt_'.$studentid.'_'.$sched_id.'-'.$type.'">'.$exam_prcnt .'</td>';
+				}else{	$td .='<td id="exam_scoreprcnt_'.$studentid.'_'.$sched_id.'-'.$type.'" ></td>'; $exam_prcnt=0; }
+				$final=$final+$exam_prcnt;
+				if($final>=75){
+					$class='passed';
+				}else{
+					$class='failed';
+				}
+
+
+				$trans_status=0;
+				if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)){
+					if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)[0]->{$type_d[8]}!=round($final,2)){
+										$trans_status = $this->sched_record_model->update_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f, round($final,2) );
+					}
+				}else{
+					$trans_status=0;
+					$this->sched_record_model->insert_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f , round($final,2)  );
+				}
+
+				$td .='<td id="exam_scorefinal_'.$studentid.'_'.$sched_id.'-'.$type.'" ><span class="'.$class.'">'.round($final,2).'</span></td>';
+			}
+		}else{
+			$trans_status=0;
+			if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)){
+					if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)[0]->{$type_d[8]}!=round($final,2)){
+										$trans_status = $this->sched_record_model->update_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f, round($final,2) );
+					}
+			}else{
+					$trans_status=0;
+					$this->sched_record_model->insert_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f , round($final,2)  );
+			}
+			$td .= '<td></td><td></td><td></td><td id="exam_scorefinal_'.$studentid.'_'.$sched_id.'-'.$type.'" >'.($final).'</td>';
+		}
+		return $td;
+	}
+
+	public function other_table_tbody($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $student_list , $cs , $exam , $pdf ){
+		 $tr='';
+		 $count=1;
+			for($x=0;$x<count($student_list);$x++){
+				$student_lfm=($this->student_model->get_student_info($student_list[$x]->studentid,'lastname , firstname , middlename '));
+				$midl_nme = ($student_lfm[0]->middlename!='')?$student_lfm[0]->middlename[0].'.':'';
+				 $tr .="<tr id='row_".$student_list[$x]->studentid."'>
+							<td >$count</td>
+							<td >".$student_list[$x]->studentid."</td>
+							<td class='student_lfm' >".$student_lfm[0]->lastname.", ".ucwords(strtolower($student_lfm[0]->firstname))." ".$midl_nme."</td>
+							".$this->other_student_cs_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $student_list[$x]->studentid ,  $cs ,  $exam, $pdf )."
+						</tr>";
+			$count++;
+			}
+		return $tr;
+	}
+
+	public function other_student_cs_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid ,  $cs ,  $exam , $pdf ){
+		$td='';
+		$total_cs='';
+		if($cs['cs']['cs_num']>0){
+			for($x=0;$x<$cs['cs']['cs_num'];$x++){
+				$cs_id=$cs['cs']['cs_query'][$x]->id;
+				$cs_items=$this->sched_cs_record_model->view_cs_items($teacher_id,$sched_id,$cs_id,$type);
+				$max=$cs['cs']['cs_query'][$x]->items;
+				$prcnt=$cs['cs']['cs_query'][$x]->percent;
+				$score_total = 0;
+				$scorexx ='';
+				$cs_items_total=0;
+				for($c=0;$c<$cs_items['cs_i_num'];$c++){
+					$cs_items_total=$cs_items_total+$cs_items['cs_i_query'][$c]->items;
+					if(!$this->_check_score($this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id, $type , 'sc_score' ),'sc_score') && $pdf==FALSE){
+							$score =0;
+							$scorexx .='<td>'.$score.'</td>';
+
+					}elseif($this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id , $type , 'sc_score' )){
+							$score =	$this->sched_record_model->get_cs_score( $labunits ,$studentid , $cs_id ,$cs_items['cs_i_query'][$c]->id , $type , 'sc_score' )[0]->sc_score;
+							$score_total = $score_total+$score;
+							$scorexx .='<td>'.$score.'</td>';
+
+					}else{
+						$score =0;
+						$scorexx .='<td>'.$score.'</td>';
+					}
+
+				}
+				if($cs_items_total<=200 ){
+					if($cs_items_total%2==0){
+						$cs_trn = transmutation($cs_items_total,$score_total);
+					}else{
+						$cs_trn =0;
+					}
+				}else{
+					if((($cs_items_total)%20==0) && $cs_items_total>200 && $cs_items_total<=400){
+						$cs_items_total=$cs_items_total/2;
+						$score_total = floor($score_total/2);
+						$cs_trn = transmutation($cs_items_total,$score_total);
+					}else{
+						$cs_trn =0;
+					}
+
+				}
+				$cs_prcnt = ($cs_trn) * ($prcnt/100);
+				$total_cs=$total_cs+$cs_prcnt;
+
+				$scorex =$scorexx.'<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-total">'.$score_total.'</td>
+								<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-trn">'.$cs_trn.'</td>
+								<td id="cs_score_'.$studentid.'_'.$sched_id.'_'.$cs_id.'-'.$type.'-prcnt">'.$cs_prcnt.'</td>';
+				$td .= "".($scorex)."";
+			}
+		}else{ $td .= '<td></td><td></td>'; }
+		$td .='<td id="cs_scoretotal_'.$studentid.'-'.$type.'" >'.$total_cs.'</td>';
+		$cs_prcntx=0;
+		if(($total_cs>0)){
+			$cs_prcntx=($total_cs) * ($type_d[1]);
+			$td .='<td id="cs_scoreprcnt_'.$studentid.'-'.$type.'">'.round($cs_prcntx,2) .'</td>';
+		}else{	$td .='<td id="cs_scoreprcnt_'.$studentid.'-'.$type.'"></td>'; $cs_prcntx=0; }
+		$td .=$this->other_student_exam_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid ,  $exam , $cs_prcntx  , $pdf );
+		return $td;
+	}
+
+	public function other_student_exam_score($lecunits , $labunits , $teacher_id , $type , $sched_id ,$type_d , $studentid , $exam , $cs_prcnt, $pdf ){
+		if($lecunits>0 && $labunits>0)
+            $type_d[8]=  $type_d[8];
+         else
+            $type_d[8]= $type_d[5];
+		$final=$cs_prcnt;
+		$td='';
+		if($lecunits>0 && $labunits>0 ){
+				$table_e_f='pcc_gs_student_gradesleclab';
+		}else{
+				$table_e_f='pcc_gs_student_gradeslec';
+		}
+		if($exam['exam']['exam_num']>0 && $exam['exam']['exam_query'][0]->{$type_d[8]}!=0){
+			for($x=0;$x<$exam['exam']['exam_num'];$x++){
+
+				$exam_id=$exam['exam']['exam_query'][$x]->id;
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type ,  $type_d[8]),$type_d[8])<=0 && $exam['exam']['exam_query'][$x]->{$type_d[8]} > 0 && $pdf==FALSE){
+						$scorex='<td><input type="number" name="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" id="exam_score_'.$exam_id.'_'.$studentid.'_'.$sched_id.'-'.$type.'" min="0" max="'.$exam['exam']['exam_query'][$x]->{$type_d[8]}.'" class="form-control inp-sm text-center empty-exam " onblur="" oninput="$(this).computeExam(\''.$studentid.'\',\''.$exam_id.'\',\''.$sched_id.'\',\''.$type.'\');" /></td>';
+				}else{
+					if($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8] )){
+							$score = $this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8] )[0]->{$type_d[8]};
+					}else{$score = '';}
+					$scorex='<td ><span>'.$score.'</span></td>';
+				}
+				$td .= $scorex;
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8]),$type_d[8]) ){
+					 $td .='<td id="exam_scoreequiv_'.$studentid.'_'.$sched_id.'-'.$type.'">'.transmutation($exam['exam']['exam_query'][0]->{$type_d[8]},$score).'</td>';
+				}else{	$td .='<td id="exam_scoreequiv_'.$studentid.'_'.$sched_id.'-'.$type.'" ></td>'; }
+				if($this->_check_score($this->sched_record_model->get_exam_score($lecunits , $labunits , $teacher_id , $studentid , $sched_id , $type , $type_d[8]),$type_d[8]) ){
+					$exam_prcnt=transmutation($exam['exam']['exam_query'][0]->{$type_d[8]},$score) * ($type_d[2]);
+					 $td .='<td id="exam_scoreprcnt_'.$studentid.'_'.$sched_id.'-'.$type.'">'.$exam_prcnt .'</td>';
+				}else{	$td .='<td id="exam_scoreprcnt_'.$studentid.'_'.$sched_id.'-'.$type.'" ></td>'; $exam_prcnt=0; }
+				$final=$final+$exam_prcnt;
+				if($final>=75){
+					$class='passed';
+				}else{
+					$class='failed';
+				}
+				$trans_status=0;
+				if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)){
+					if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)[0]->{$type_d[8]}!=round($final,2)){
+										$trans_status = $this->sched_record_model->update_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f, round($final,2) );
+					}
+				}else{
+					$trans_status=0;
+					$this->sched_record_model->insert_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f , round($final,2)  );
+				}
+
+				$td .='<td  ><span class="'.$class.'">'.round($final,2).'</span></td>';
+			}
+		}else{
+			if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)){
+					if($this->sched_record_model->get_student_finalgrade( $studentid , $sched_id , $type_d[8] , $table_e_f)[0]->{$type_d[8]}!=round($final,2)){
+										$trans_status = $this->sched_record_model->update_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f, round($final,2) );
+					}
+				}else{
+					$trans_status=0;
+					$this->sched_record_model->insert_student_finalgrade( $studentid , $sched_id , $type_d , $table_e_f , round($final,2)  );
+				}
+			$td .= '<td></td><td></td><td></td><td  >'.($final).'</td>';
+		}
+		return $td;
+	}
+
+
+
+	public function _check_score($score,$type_d){
+		if($score){
+			if($score[0]->{$type_d}!=NULL || $score[0]->{$type_d}!="")
+				return 1;
+			else
+				return 0;
+		}else{	return 0;	}
+	}
+
+
+
+
+}

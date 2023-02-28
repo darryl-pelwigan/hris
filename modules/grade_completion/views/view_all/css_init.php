@@ -1,0 +1,1 @@
+<link rel="stylesheet" type="text/css" href="<?=base_url()?>assets/plugins/DataTablesN/DataTables-1.10.16/css/dataTables.bootstrap.min.css">
